@@ -1,0 +1,17 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Portfolio Theory Dashboard",
+			"type": "shell",
+			"command": "python",
+			"args": ["-m", "streamlit", "run", "app.py"],
+			"group": "build",
+			"isBackground": true,
+			"problemMatcher": [],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			}
+		}
+	]
+}
