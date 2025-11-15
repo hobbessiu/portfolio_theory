@@ -1418,16 +1418,31 @@ Modern Portfolio Theory helps you build a portfolio that balances risk and rewar
                 ]).first().unstack()
                 
                 if len(monthly_returns_pivot) > 0:
+                    # Convert to percentage and handle NaN values
+                    heatmap_data = monthly_returns_pivot.values * 100
+                    
+                    # Create text with conditional formatting (hide NaN)
+                    text_data = []
+                    for row in heatmap_data:
+                        text_row = []
+                        for val in row:
+                            if np.isnan(val):
+                                text_row.append('')  # Empty string for NaN
+                            else:
+                                text_row.append(f'{val:.1f}%')
+                        text_data.append(text_row)
+                    
                     fig_heatmap = go.Figure(data=go.Heatmap(
-                        z=monthly_returns_pivot.values * 100,  # Convert to percentage
+                        z=heatmap_data,
                         x=['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                            'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
                         y=monthly_returns_pivot.index,
                         colorscale='RdYlGn',
-                        text=monthly_returns_pivot.values * 100,
-                        texttemplate="%{text:.1f}%",
+                        text=text_data,
+                        texttemplate="%{text}",
                         textfont={"size": 10},
-                        hoverongaps=False
+                        hoverongaps=False,
+                        zmid=0  # Center colorscale at 0%
                     ))
                     
                     fig_heatmap.update_layout(
