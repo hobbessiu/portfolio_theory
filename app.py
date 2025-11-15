@@ -16,6 +16,7 @@ import yfinance as yf
 
 from portfolio_optimizer import PortfolioOptimizer, BacktestEngine, MonteCarloSimulator
 from quick_improvements import apply_quick_improvements, EnhancedErrorHandler, LoadingManager, MODERN_THEME_CSS
+from utils import RiskMetrics
 
 # Enhanced page configuration with modern theme
 st.set_page_config(
@@ -528,16 +529,58 @@ Modern Portfolio Theory helps you build a portfolio that balances risk and rewar
     # Sidebar configuration
     st.sidebar.header("📊 Configuration")
     
+    # Add beginner-friendly help
+    with st.sidebar.expander("❓ Help for Beginners", expanded=False):
+        st.markdown("""
+        **🎯 Quick Guide to Settings:**
+        
+        **Top N Stocks**: How many companies to include
+        - More stocks = more diversification
+        - Fewer stocks = simpler portfolio
+        - **Tip**: Start with 20-30 stocks
+        
+        **Historical Period**: How far back to analyze
+        - Longer = more data, captures different market cycles
+        - Shorter = more recent market conditions
+        - **Tip**: 3-5 years is a good balance
+        
+        **Risk-Free Rate**: Safe investment return (like T-Bills)
+        - Used to calculate risk-adjusted returns
+        - Currently ~4-5% in 2025
+        - **Tip**: Use 2-5% for realistic analysis
+        
+        **Transaction Cost**: Trading fees per transaction
+        - Includes broker fees and slippage
+        - Typical: 0.1% for most brokers
+        - **Tip**: Lower is better (use discount brokers!)
+        
+        **Max Weight per Asset**: Maximum % in one stock
+        - Lower = more diversification, safer
+        - Higher = can concentrate in best performers
+        - **Tip**: 15-20% prevents over-concentration
+        
+        **Minimum Positions**: Least number of stocks to hold
+        - Ensures you don't put all eggs in one basket
+        - More positions = more diversification
+        - **Tip**: At least 5-10 stocks for safety
+        """)
+    
     # Configuration parameters
-    top_n_stocks = st.sidebar.slider("Top N S&P 500 Stocks", min_value=10, max_value=100, value=30, step=5)
-    time_period = st.sidebar.selectbox("Historical Data Period", ["1y", "2y", "3y", "5y", "10y"], index=3)
-    risk_free_rate = st.sidebar.number_input("Risk-Free Rate (%)", min_value=0.0, max_value=10.0, value=2.0, step=0.1) / 100
-    transaction_cost = st.sidebar.number_input("Transaction Cost (%)", min_value=0.0, max_value=2.0, value=0.1, step=0.01) / 100
+    top_n_stocks = st.sidebar.slider("Top N S&P 500 Stocks", min_value=10, max_value=100, value=30, step=5,
+                                      help="Number of largest S&P 500 companies to consider. More stocks = better diversification.")
+    time_period = st.sidebar.selectbox("Historical Data Period", ["1y", "2y", "3y", "5y", "10y"], index=3,
+                                        help="How many years of price history to analyze. Longer periods capture more market conditions.")
+    risk_free_rate = st.sidebar.number_input("Risk-Free Rate (%)", min_value=0.0, max_value=10.0, value=2.0, step=0.1,
+                                              help="Expected return from safe investments (e.g., Treasury Bills). Used to calculate Sharpe ratio.") / 100
+    transaction_cost = st.sidebar.number_input("Transaction Cost (%)", min_value=0.0, max_value=2.0, value=0.1, step=0.01,
+                                                help="Cost per trade as % of transaction value. Includes broker fees and market impact.") / 100
     
     # Diversification controls
     st.sidebar.markdown("### 🎯 Diversification")
-    max_weight = st.sidebar.slider("Max Weight per Asset (%)", min_value=5, max_value=100, value=20, step=5) / 100
-    min_positions = st.sidebar.number_input("Minimum Positions", min_value=1, max_value=100, value=5)
+    max_weight = st.sidebar.slider("Max Weight per Asset (%)", min_value=5, max_value=100, value=20, step=5,
+                                     help="Maximum percentage allocated to any single stock. Lower values force more diversification.") / 100
+    min_positions = st.sidebar.number_input("Minimum Positions", min_value=1, max_value=100, value=5,
+                                             help="Minimum number of stocks to hold. Ensures portfolio isn't too concentrated.")
     
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🚀 Quick Actions")
@@ -977,8 +1020,29 @@ Modern Portfolio Theory helps you build a portfolio that balances risk and rewar
                 # Performance metrics comparison
                 st.subheader("📊 Performance Metrics Comparison")
                 
+                # Calculate max drawdown for each strategy
+                portfolio_max_dd = RiskMetrics.calculate_max_drawdown(results['portfolio']['returns'])
+                benchmark_max_dd = RiskMetrics.calculate_max_drawdown(results['benchmark']['returns'])
+                equal_weight_max_dd = RiskMetrics.calculate_max_drawdown(results['equal_weight']['returns'])
+                
+                # Calculate Sortino ratio for each strategy
+                portfolio_sortino = RiskMetrics.calculate_sortino_ratio(results['portfolio']['returns'], risk_free_rate)
+                benchmark_sortino = RiskMetrics.calculate_sortino_ratio(results['benchmark']['returns'], risk_free_rate)
+                equal_weight_sortino = RiskMetrics.calculate_sortino_ratio(results['equal_weight']['returns'], risk_free_rate)
+                
+                # Calculate Calmar ratio (annual return / max drawdown)
+                portfolio_calmar = results['portfolio']['annual_return'] / abs(portfolio_max_dd) if portfolio_max_dd != 0 else 0
+                benchmark_calmar = results['benchmark']['annual_return'] / abs(benchmark_max_dd) if benchmark_max_dd != 0 else 0
+                equal_weight_calmar = results['equal_weight']['annual_return'] / abs(equal_weight_max_dd) if equal_weight_max_dd != 0 else 0
+                
+                # Calculate cumulative return
+                portfolio_cum_return = results['portfolio']['cumulative_returns'].iloc[-1] - 1
+                benchmark_cum_return = results['benchmark']['cumulative_returns'].iloc[-1] - 1
+                equal_weight_cum_return = results['equal_weight']['cumulative_returns'].iloc[-1] - 1
+                
                 metrics_data = {
                     'Strategy': [results['strategy_name'], 'S&P 500 (SPY)', 'Equal Weight'],
+                    'Cumulative Return': [portfolio_cum_return, benchmark_cum_return, equal_weight_cum_return],
                     'Annual Return': [
                         results['portfolio']['annual_return'],
                         results['benchmark']['annual_return'],
@@ -989,19 +1053,64 @@ Modern Portfolio Theory helps you build a portfolio that balances risk and rewar
                         results['benchmark']['volatility'],
                         results['equal_weight']['volatility']
                     ],
+                    'Max Drawdown': [portfolio_max_dd, benchmark_max_dd, equal_weight_max_dd],
                     'Sharpe Ratio': [
                         results['portfolio']['sharpe_ratio'],
                         results['benchmark']['sharpe_ratio'],
                         results['equal_weight']['sharpe_ratio']
-                    ]
+                    ],
+                    'Sortino Ratio': [portfolio_sortino, benchmark_sortino, equal_weight_sortino],
+                    'Calmar Ratio': [portfolio_calmar, benchmark_calmar, equal_weight_calmar]
                 }
                 
                 metrics_df = pd.DataFrame(metrics_data)
-                metrics_df['Annual Return'] = metrics_df['Annual Return'].map('{:.2%}'.format)
-                metrics_df['Volatility'] = metrics_df['Volatility'].map('{:.2%}'.format)
-                metrics_df['Sharpe Ratio'] = metrics_df['Sharpe Ratio'].map('{:.2f}'.format)
                 
-                st.dataframe(metrics_df, width='stretch')
+                # Format the dataframe
+                display_df = metrics_df.copy()
+                display_df['Cumulative Return'] = display_df['Cumulative Return'].map('{:.2%}'.format)
+                display_df['Annual Return'] = display_df['Annual Return'].map('{:.2%}'.format)
+                display_df['Volatility'] = display_df['Volatility'].map('{:.2%}'.format)
+                display_df['Max Drawdown'] = display_df['Max Drawdown'].map('{:.2%}'.format)
+                display_df['Sharpe Ratio'] = display_df['Sharpe Ratio'].map('{:.2f}'.format)
+                display_df['Sortino Ratio'] = display_df['Sortino Ratio'].map('{:.2f}'.format)
+                display_df['Calmar Ratio'] = display_df['Calmar Ratio'].map('{:.2f}'.format)
+                
+                st.dataframe(display_df, width='stretch')
+                
+                # Add explanation of metrics
+                with st.expander("📖 Understanding Performance Metrics"):
+                    st.markdown("""
+                    **Cumulative Return**: Total gain/loss over the entire period
+                    - Shows overall investment growth
+                    - Example: 50% means $10,000 became $15,000
+                    
+                    **Annual Return**: Average yearly return (annualized)
+                    - Standardized measure for comparing different time periods
+                    - Higher is better for long-term wealth building
+                    
+                    **Volatility (Risk)**: Standard deviation of returns
+                    - Measures price fluctuation and uncertainty
+                    - Lower is better for risk-averse investors
+                    
+                    **Max Drawdown**: Largest peak-to-trough decline
+                    - Shows worst-case loss experience
+                    - Important for understanding downside risk
+                    - Lower (less negative) is better
+                    
+                    **Sharpe Ratio**: Risk-adjusted return (excess return / volatility)
+                    - Measures return per unit of total risk
+                    - Higher is better (>1 is good, >2 is very good)
+                    
+                    **Sortino Ratio**: Risk-adjusted return using downside deviation
+                    - Similar to Sharpe but only penalizes downside volatility
+                    - Better measure for investors who don't mind upside volatility
+                    - Higher is better
+                    
+                    **Calmar Ratio**: Annual return / max drawdown
+                    - Measures return relative to worst drawdown
+                    - Higher is better (shows strong recovery from losses)
+                    - Useful for assessing risk of ruin
+                    """)
                 
                 # Equal Weight Composition
                 st.subheader("⚖️ Equal Weight Portfolio Composition")
@@ -1038,9 +1147,9 @@ Modern Portfolio Theory helps you build a portfolio that balances risk and rewar
                 st.subheader("🎯 Risk-Return Analysis")
                 results_df = pd.DataFrame({
                     'strategy': metrics_data['Strategy'],
-                    'return': [float(x.strip('%'))/100 for x in metrics_df['Annual Return']],
-                    'volatility': [float(x.strip('%'))/100 for x in metrics_df['Volatility']],
-                    'sharpe_ratio': [float(x) for x in metrics_df['Sharpe Ratio']]
+                    'return': metrics_data['Annual Return'],
+                    'volatility': metrics_data['Volatility'],
+                    'sharpe_ratio': metrics_data['Sharpe Ratio']
                 })
                 
                 fig_scatter = create_risk_return_scatter(results_df)
@@ -1171,25 +1280,98 @@ Modern Portfolio Theory helps you build a portfolio that balances risk and rewar
             st.subheader("🎯 Advanced Risk Metrics")
             
             try:
-                from utils import RiskMetrics
                 risk_calc = RiskMetrics()
                 
-                # Calculate additional metrics
-                max_drawdown = risk_calc.calculate_max_drawdown(results['portfolio']['cumulative_returns'])
-                sortino_ratio = risk_calc.calculate_sortino_ratio(portfolio_returns)
-                calmar_ratio = results['portfolio']['annual_return'] / abs(max_drawdown) if max_drawdown != 0 else 0
+                # Calculate all available metrics
+                max_drawdown = risk_calc.calculate_max_drawdown(portfolio_returns)
+                sortino_ratio = risk_calc.calculate_sortino_ratio(portfolio_returns, risk_free_rate)
+                calmar_ratio = risk_calc.calculate_calmar_ratio(portfolio_returns)
+                var_5 = risk_calc.calculate_var(portfolio_returns, confidence_level=0.05)
+                cvar_5 = risk_calc.calculate_cvar(portfolio_returns, confidence_level=0.05)
+                var_1 = risk_calc.calculate_var(portfolio_returns, confidence_level=0.01)
+                cvar_1 = risk_calc.calculate_cvar(portfolio_returns, confidence_level=0.01)
                 
-                # Display advanced metrics
-                risk_col1, risk_col2, risk_col3 = st.columns(3)
+                # Display all metrics in a grid
+                risk_col1, risk_col2, risk_col3, risk_col4 = st.columns(4)
                 
                 with risk_col1:
-                    st.metric("Maximum Drawdown", f"{max_drawdown:.2%}")
+                    st.metric("Maximum Drawdown", f"{max_drawdown:.2%}", 
+                             help="Largest peak-to-trough decline in portfolio value")
+                    st.metric("VaR (95%)", f"{var_5:.2%}",
+                             help="Value at Risk: Maximum expected loss on 95% of days")
                 
                 with risk_col2:
-                    st.metric("Sortino Ratio", f"{sortino_ratio:.2f}")
+                    st.metric("Sortino Ratio", f"{sortino_ratio:.2f}",
+                             help="Risk-adjusted return using downside deviation only")
+                    st.metric("CVaR (95%)", f"{cvar_5:.2%}",
+                             help="Conditional VaR: Average loss when losses exceed VaR")
                 
                 with risk_col3:
-                    st.metric("Calmar Ratio", f"{calmar_ratio:.2f}")
+                    st.metric("Calmar Ratio", f"{calmar_ratio:.2f}",
+                             help="Annual return divided by maximum drawdown")
+                    st.metric("VaR (99%)", f"{var_1:.2%}",
+                             help="Value at Risk: Maximum expected loss on 99% of days")
+                
+                with risk_col4:
+                    st.metric("Annual Return", f"{results['portfolio']['annual_return']:.2%}",
+                             help="Average yearly return (annualized)")
+                    st.metric("CVaR (99%)", f"{cvar_1:.2%}",
+                             help="Conditional VaR: Average loss in worst 1% of days")
+                
+                # Add beginner-friendly explanation
+                with st.expander("📖 Understanding Advanced Risk Metrics for Beginners"):
+                    st.markdown("""
+                    ### 📊 Risk & Return Metrics Explained
+                    
+                    **Maximum Drawdown (Max DD)**
+                    - What it is: The biggest drop from a peak to a trough in your portfolio value
+                    - Why it matters: Shows the worst loss you would have experienced
+                    - Example: -20% means if you had $10,000 at peak, it dropped to $8,000 at worst
+                    - **Lower is better** (less negative means smaller losses)
+                    
+                    **Sortino Ratio**
+                    - What it is: Similar to Sharpe Ratio, but only counts downside volatility as risk
+                    - Why it matters: Better for investors who don't mind upside volatility
+                    - Calculation: (Return - Risk-Free Rate) / Downside Deviation
+                    - **Higher is better** (>2 is excellent, >1 is good)
+                    
+                    **Calmar Ratio**
+                    - What it is: Annual return divided by maximum drawdown
+                    - Why it matters: Shows how much return you get per unit of worst-case risk
+                    - Example: 1.5 means you earned 1.5% return for every 1% of max drawdown
+                    - **Higher is better** (>1 is good, means you recover well from losses)
+                    
+                    **Value at Risk (VaR)**
+                    - What it is: Maximum loss expected on X% of days (95% or 99%)
+                    - Why it matters: Helps you understand typical bad days
+                    - Example: VaR 95% = -2% means on 95% of days, you won't lose more than 2%
+                    - **Less negative is better** (smaller typical losses)
+                    
+                    **Conditional VaR (CVaR) / Expected Shortfall**
+                    - What it is: Average loss when losses are worse than VaR
+                    - Why it matters: Shows how bad the really bad days are
+                    - Example: CVaR 95% = -3% means when you lose more than VaR, average loss is 3%
+                    - **Less negative is better** (indicates tail risk is controlled)
+                    
+                    **Annual Return**
+                    - What it is: Average yearly return, standardized for comparison
+                    - Why it matters: Shows wealth-building potential
+                    - **Higher is better** (10% means you'd expect to grow $10,000 to $11,000 yearly)
+                    
+                    ### 💡 How to Use These Metrics
+                    
+                    1. **Compare drawdown across strategies**: Lower drawdown = easier to stick with during tough times
+                    2. **Use Sortino if you like upside volatility**: Better than Sharpe for growth investors
+                    3. **Check Calmar for recovery ability**: High Calmar means good bounce-back from losses
+                    4. **VaR/CVaR for daily risk**: Helps set stop-losses and understand typical losses
+                    5. **Balance return with risk**: High return with low drawdown is ideal
+                    
+                    ### ⚠️ Important Notes
+                    - All metrics use historical data - past performance doesn't guarantee future results
+                    - Use multiple metrics together for a complete picture
+                    - Consider your personal risk tolerance and investment timeline
+                    - These are tools for comparison, not predictions
+                    """)
                 
                 # Rolling metrics
                 st.subheader("📈 Rolling Performance Analysis")
