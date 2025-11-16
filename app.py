@@ -1362,6 +1362,33 @@ Modern Portfolio Theory helps you build a portfolio that balances risk and rewar
     # Tab 3: Monte Carlo Simulation
     with tab3:
         st.header("🎲 Monte Carlo Simulation")
+        # Beginner-friendly help expander
+        with st.expander("❓ What is Monte Carlo Simulation? Beginner Help", expanded=True):
+            st.markdown("""
+            **Monte Carlo simulation** is a technique that helps investors understand the range of possible future outcomes for their portfolio by simulating thousands of different market scenarios.
+            
+            - It uses historical returns and volatility to generate many possible future paths for your portfolio value.
+            - This helps you see not just the average result, but also the best-case, worst-case, and most likely outcomes.
+            
+            **How to use it:**
+            1. Choose how many simulations to run (more = more accuracy)
+            2. Set your investment time horizon (years)
+            3. Pick your confidence level (for risk metrics)
+            4. Enter your initial investment amount
+            
+            **Understanding the output fields:**
+            - **Expected Value**: The average portfolio value at the end of the simulation period. This is the 'typical' outcome.
+            - **Standard Deviation**: Shows how much the results vary. Higher means more uncertainty/risk.
+            - **VaR (Value at Risk)**: The worst-case loss you might expect at your chosen confidence level (e.g., 95%).
+            - **Expected Shortfall**: The average of the worst losses beyond the VaR threshold. Shows how bad things could get in a crisis.
+            - **Portfolio Value Distribution**: A chart showing how often each outcome occurred in the simulations.
+            - **Percentile Analysis**: Shows the portfolio value at different percentiles (e.g., 5th, 50th, 95th), so you can see the range from worst to best case.
+            
+            **Why use Monte Carlo simulation?**
+            - It helps you understand risk, not just average returns
+            - Lets you plan for both good and bad scenarios
+            - Makes investing less about guessing and more about informed decision-making
+            """)
         
         if 'optimization_results' not in st.session_state:
             st.warning("⚠️ Please run portfolio optimization first.")
