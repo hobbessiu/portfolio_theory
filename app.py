@@ -956,8 +956,12 @@ Modern Portfolio Theory helps you build a portfolio that balances risk and rewar
                         strategy_name = "Optimized (Fixed)"
                     else:
                         # Use walk-forward analysis with dynamic re-optimization
+                        # Pass the same constraints used in initial optimization
                         portfolio_performance = backtest_engine.backtest_portfolio_walk_forward(
-                            result_data, freq_map[rebalance_freq]
+                            result_data, 
+                            freq_map[rebalance_freq],
+                            max_weight=max_weight,
+                            min_positions=min_positions
                         )
                         strategy_name = "Optimized (Walk-Forward)"
                     
@@ -995,7 +999,9 @@ Modern Portfolio Theory helps you build a portfolio that balances risk and rewar
                         'equal_weight': equal_weight_performance,
                         'strategy_name': strategy_name,
                         'equal_weight_tickers': equal_weight_tickers,
-                        'equal_weight_n': n_equal_weight
+                        'equal_weight_n': n_equal_weight,
+                        'portfolio_performance': portfolio_performance,  # Store full performance data
+                        'backtest_method': backtest_method
                     }
                     
                     st.success("✅ Backtesting completed successfully!")
@@ -1122,14 +1128,14 @@ Modern Portfolio Theory helps you build a portfolio that balances risk and rewar
                     col1, col2 = st.columns([2, 1])
                     
                     with col1:
-                        # Create dataframe of equal weight holdings
+                        # Create dataframe of equal weight holdings - showing tickers only
+                        # since all weights are identical (shown in the metrics)
                         eq_df = pd.DataFrame({
-                            'Ticker': eq_tickers,
-                            'Weight': [eq_weight] * eq_n
+                            '#': range(1, eq_n + 1),
+                            'Ticker': eq_tickers
                         })
-                        eq_df['Weight'] = eq_df['Weight'].map('{:.2%}'.format)
                         
-                        st.dataframe(eq_df, width='stretch')
+                        st.dataframe(eq_df, hide_index=True, width='stretch')
                     
                     with col2:
                         st.metric("Number of Stocks", eq_n)
@@ -1142,6 +1148,204 @@ Modern Portfolio Theory helps you build a portfolio that balances risk and rewar
                         
                         This benchmark helps evaluate if optimization adds value over naive diversification.
                         """)
+                
+                # Walk-Forward Rebalancing Details (only shown for walk-forward method)
+                if results.get('backtest_method') == "Walk-Forward Analysis":
+                    st.subheader("🔄 Walk-Forward Rebalancing History")
+                    
+                    portfolio_perf = results.get('portfolio_performance')
+                    if portfolio_perf is not None and hasattr(portfolio_perf, 'attrs'):
+                        compositions = portfolio_perf.attrs.get('portfolio_compositions', [])
+                        
+                        if compositions:
+                            # Calculate diagnostic metrics
+                            total_turnover = 0
+                            for idx in range(1, len(compositions)):
+                                prev_comp = compositions[idx-1]['composition']
+                                curr_comp = compositions[idx]['composition']
+                                all_tickers = set(prev_comp.keys()) | set(curr_comp.keys())
+                                turnover = sum(abs(curr_comp.get(t, 0) - prev_comp.get(t, 0)) for t in all_tickers) / 2
+                                total_turnover += turnover
+                            
+                            avg_turnover = total_turnover / max(len(compositions) - 1, 1) if len(compositions) > 1 else 0
+                            
+                            # Calculate average portfolio concentration
+                            avg_concentration = np.mean([
+                                sum(w**2 for w in comp['composition'].values()) 
+                                for comp in compositions
+                            ])
+                            
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("Total Rebalances", len(compositions))
+                            with col2:
+                                st.metric("Avg Turnover per Rebalance", f"{avg_turnover:.1%}",
+                                         help="Average portfolio turnover at each rebalancing. Higher = more drastic changes")
+                            with col3:
+                                st.metric("Avg Concentration", f"{avg_concentration:.3f}",
+                                         help="Herfindahl index: Lower = more diversified. 1.0 = all in one stock")
+                            with col4:
+                                # Calculate time between rebalances
+                                if len(compositions) > 1:
+                                    days_between = (compositions[-1]['date'] - compositions[0]['date']).days / (len(compositions) - 1)
+                                    st.metric("Avg Days Between", f"{days_between:.0f}")
+                                else:
+                                    st.metric("Avg Days Between", "N/A")
+                            
+                            st.info(f"""
+                            **Walk-Forward Analysis Insights**:
+                            
+                            At each rebalancing date, the optimizer used only historical data available up to that point, 
+                            preventing look-ahead bias and simulating real-world portfolio management.
+                            
+                            **🔬 Survivorship-Bias-Free Analysis**: The optimizer only considers stocks with sufficient historical 
+                            data at each rebalancing date. This excludes:
+                            - Stocks that weren't publicly traded yet
+                            - Stocks with insufficient trading history
+                            - Stocks with excessive missing data
+                            
+                            This simulates realistic portfolio construction at each point in time, though it approximates historical 
+                            S&P 500 composition rather than using exact historical index membership (which requires proprietary data).
+                            
+                            **Why different frequencies perform differently:**
+                            - **Monthly**: More frequent rebalancing but may overfit to recent noise with limited lookback data
+                            - **Quarterly**: Balances stability with adaptability; aligns with earnings cycles
+                            - **Semi-Annual/Yearly**: Fewer rebalances may miss important market shifts or have insufficient data points
+                            
+                            High turnover suggests the optimizer is chasing recent performance (possible overfitting).
+                            Low turnover suggests stable, consistent allocations.
+                            """)
+                            
+                            # Show optimization quality summary
+                            failed_optimizations = sum(1 for comp in compositions if not comp.get('optimization_success', True))
+                            if failed_optimizations > 0:
+                                st.warning(f"⚠️ **Warning**: {failed_optimizations} out of {len(compositions)} optimizations failed and fell back to equal weights. "
+                                          f"This may indicate insufficient historical data or numerical issues. Consider using a longer time period or quarterly/semi-annual rebalancing.")
+                            
+                            # Show historical data availability for each rebalancing
+                            with st.expander("📊 Historical Data Availability at Each Rebalancing"):
+                                history_data = [(comp['date'].strftime('%Y-%m-%d'), comp.get('history_days', 0)) for comp in compositions if comp.get('history_days', 0) > 0]
+                                if history_data:
+                                    history_df = pd.DataFrame(history_data, columns=['Date', 'Days of History'])
+                                    st.dataframe(history_df, use_container_width=True)
+                                    
+                                    min_history = min(h[1] for h in history_data) if history_data else 0
+                                    avg_history = np.mean([h[1] for h in history_data]) if history_data else 0
+                                    
+                                    st.info(f"""
+                                    **Data Availability Analysis:**
+                                    - Minimum history used: {min_history} days (~{min_history/252:.1f} years)
+                                    - Average history used: {avg_history:.0f} days (~{avg_history/252:.1f} years)
+                                    
+                                    **Rule of Thumb**: For robust optimization, you typically want at least 252 days (1 year) of history, 
+                                    preferably 2-3 years. Less data may lead to overfitting where the optimizer latches onto recent noise rather than true patterns.
+                                    """)
+                            
+                            # Create expandable sections for each rebalancing
+                            for idx, rebal in enumerate(compositions, 1):
+                                date = rebal['date']
+                                composition = rebal['composition']
+                                history_days = rebal.get('history_days', 0)
+                                opt_success = rebal.get('optimization_success', True)
+                                stocks_available = rebal.get('stocks_available', len(composition))
+                                
+                                # Sort by weight descending
+                                sorted_composition = sorted(composition.items(), key=lambda x: x[1], reverse=True)
+                                
+                                # Calculate changes from previous rebalancing
+                                prev_composition = compositions[idx-2]['composition'] if idx > 1 else {}
+                                
+                                # Create title with diagnostic info
+                                title = f"📅 Rebalancing #{idx} - {date.strftime('%B %d, %Y')}"
+                                if history_days > 0:
+                                    title += f" ({history_days} days history, {stocks_available} stocks available)"
+                                if not opt_success:
+                                    title += " ⚠️ Optimization Failed - Using Equal Weights"
+                                
+                                with st.expander(title, expanded=(idx <= 2)):
+                                    # Show changes from previous rebalancing (if not first)
+                                    if idx > 1:
+                                        st.markdown("##### 📊 Changes from Previous Rebalancing")
+                                        
+                                        # Identify additions, removals, and changes
+                                        all_tickers = set(composition.keys()) | set(prev_composition.keys())
+                                        additions = []
+                                        removals = []
+                                        increases = []
+                                        decreases = []
+                                        
+                                        for ticker in all_tickers:
+                                            new_weight = composition.get(ticker, 0)
+                                            old_weight = prev_composition.get(ticker, 0)
+                                            change = new_weight - old_weight
+                                            
+                                            if old_weight == 0 and new_weight > 0:
+                                                additions.append((ticker, new_weight))
+                                            elif old_weight > 0 and new_weight == 0:
+                                                removals.append((ticker, old_weight))
+                                            elif abs(change) > 0.005:  # More than 0.5% change
+                                                if change > 0:
+                                                    increases.append((ticker, old_weight, new_weight, change))
+                                                else:
+                                                    decreases.append((ticker, old_weight, new_weight, change))
+                                        
+                                        # Display changes in a user-friendly way
+                                        change_col1, change_col2 = st.columns(2)
+                                        
+                                        with change_col1:
+                                            if additions:
+                                                st.markdown("**✅ Added to Portfolio:**")
+                                                for ticker, weight in sorted(additions, key=lambda x: x[1], reverse=True):
+                                                    st.markdown(f"- **{ticker}**: {weight:.2%}")
+                                            
+                                            if increases:
+                                                st.markdown("**📈 Increased Positions:**")
+                                                for ticker, old_w, new_w, change in sorted(increases, key=lambda x: x[3], reverse=True):
+                                                    st.markdown(f"- **{ticker}**: {old_w:.2%} → {new_w:.2%} <span style='color:green'>(+{change:.2%})</span>", unsafe_allow_html=True)
+                                        
+                                        with change_col2:
+                                            if removals:
+                                                st.markdown("**❌ Removed from Portfolio:**")
+                                                for ticker, weight in sorted(removals, key=lambda x: x[1], reverse=True):
+                                                    st.markdown(f"- **{ticker}**: {weight:.2%}")
+                                            
+                                            if decreases:
+                                                st.markdown("**📉 Decreased Positions:**")
+                                                for ticker, old_w, new_w, change in sorted(decreases, key=lambda x: x[3]):
+                                                    st.markdown(f"- **{ticker}**: {old_w:.2%} → {new_w:.2%} <span style='color:red'>({change:.2%})</span>", unsafe_allow_html=True)
+                                        
+                                        if not (additions or removals or increases or decreases):
+                                            st.info("No significant changes from previous rebalancing.")
+                                        
+                                        st.divider()
+                                    
+                                    # Portfolio composition after rebalancing
+                                    st.markdown("##### 💼 Portfolio Composition After Rebalancing")
+                                    
+                                    # Create a two-column layout
+                                    col1, col2 = st.columns([3, 2])
+                                    
+                                    with col1:
+                                        # Portfolio composition table
+                                        comp_df = pd.DataFrame([
+                                            {'#': i+1, 'Ticker': ticker, 'Weight': f"{weight:.2%}"}
+                                            for i, (ticker, weight) in enumerate(sorted_composition)
+                                        ])
+                                        st.dataframe(comp_df, hide_index=True, use_container_width=True)
+                                    
+                                    with col2:
+                                        # Summary metrics
+                                        st.metric("Number of Holdings", len(composition))
+                                        st.metric("Largest Position", f"{sorted_composition[0][1]:.2%}" if sorted_composition else "N/A")
+                                        st.metric("Smallest Position", f"{sorted_composition[-1][1]:.2%}" if sorted_composition else "N/A")
+                                        
+                                        # Concentration measure
+                                        weights_array = np.array(list(composition.values()))
+                                        herfindahl = np.sum(weights_array ** 2)
+                                        st.metric("Portfolio Concentration", f"{herfindahl:.3f}", 
+                                                 help="Herfindahl index: 1.0 = concentrated in one stock, lower = more diversified")
+                        else:
+                            st.info("No rebalancing data available for this backtest.")
                 
                 # Risk-return scatter plot
                 st.subheader("🎯 Risk-Return Analysis")

@@ -555,7 +555,9 @@ class BacktestEngine:
     
     def backtest_portfolio_walk_forward(self, prices: pd.DataFrame, 
                                       rebalance_freq: str = 'M',
-                                      min_history_days: int = 252) -> pd.DataFrame:
+                                      min_history_days: int = 252,
+                                      max_weight: float = 0.20,
+                                      min_positions: int = None) -> pd.DataFrame:
         """
         Backtest a portfolio strategy with walk-forward analysis (dynamic re-optimization).
         
@@ -566,6 +568,8 @@ class BacktestEngine:
             prices: Historical price data
             rebalance_freq: Rebalancing frequency ('M', 'Q', '6M', 'Y')
             min_history_days: Minimum days of history required for optimization
+            max_weight: Maximum weight for any single asset (should match initial optimization)
+            min_positions: Minimum number of positions (should match initial optimization)
             
         Returns:
             DataFrame with portfolio performance including rebalancing costs
@@ -591,6 +595,7 @@ class BacktestEngine:
         daily_portfolio_values = []
         rebalancing_costs = []
         optimization_dates = []
+        portfolio_compositions = []  # Track weights at each rebalancing
         
         for i, date in enumerate(returns.index):
             # Check if we need to rebalance/optimize today
@@ -608,24 +613,57 @@ class BacktestEngine:
                     # Re-optimize using only historical data
                     historical_returns = returns.loc[:date].iloc[:-1]  # Exclude current day
                     
-                    if len(historical_returns) >= min_history_days:
+                    # Filter to only stocks with sufficient data at this point (survivorship-bias free)
+                    # Remove stocks that don't have enough history or have too many NaN values
+                    valid_stocks = []
+                    for col in historical_returns.columns:
+                        col_data = historical_returns[col].dropna()
+                        if len(col_data) >= min(min_history_days, len(historical_returns) * 0.8):
+                            valid_stocks.append(col)
+                    
+                    # Use only valid stocks for this optimization
+                    if len(valid_stocks) >= 2:  # Need at least 2 stocks for portfolio
+                        historical_returns_filtered = historical_returns[valid_stocks]
+                    else:
+                        historical_returns_filtered = historical_returns
+                    
+                    if len(historical_returns_filtered) >= min_history_days:
                         try:
-                            result = optimizer.optimize_portfolio(historical_returns)
+                            # Use same constraints as initial optimization
+                            result = optimizer.optimize_portfolio(
+                                historical_returns_filtered, 
+                                max_weight=max_weight,
+                                min_positions=min_positions
+                            )
                             if result['status'] == 'optimal':
-                                new_weights = result['weights']
+                                # Map weights back to full universe (zeros for stocks not in optimization)
+                                new_weights = np.zeros(len(returns.columns))
+                                for i, ticker in enumerate(returns.columns):
+                                    if ticker in valid_stocks:
+                                        idx_in_filtered = valid_stocks.index(ticker)
+                                        new_weights[i] = result['weights'][idx_in_filtered]
+                                
                                 optimization_dates.append(date)
+                                optimization_success = True
+                                stocks_available = len(valid_stocks)
                             else:
                                 # Fallback to equal weights if optimization fails
                                 n_assets = len(returns.columns)
                                 new_weights = np.ones(n_assets) / n_assets
+                                optimization_success = False
+                                stocks_available = len(returns.columns)
                         except Exception as e:
                             # Fallback to equal weights on error
                             n_assets = len(returns.columns)
                             new_weights = np.ones(n_assets) / n_assets
+                            optimization_success = False
+                            stocks_available = len(returns.columns)
                     else:
                         # Not enough history - use equal weights
                         n_assets = len(returns.columns)
                         new_weights = np.ones(n_assets) / n_assets
+                        optimization_success = False
+                        stocks_available = len(returns.columns)
                 
                 # Calculate transaction costs if we had previous weights
                 if current_weights is not None:
@@ -636,6 +674,16 @@ class BacktestEngine:
                 
                 # Update current weights
                 current_weights = new_weights.copy()
+                
+                # Store composition at rebalancing (ticker names with weights)
+                composition = {ticker: weight for ticker, weight in zip(prices.columns, new_weights) if weight > 0.001}  # Only include meaningful positions
+                portfolio_compositions.append({
+                    'date': date,
+                    'composition': composition,
+                    'history_days': len(historical_returns) if date != returns.index[0] else 0,
+                    'optimization_success': optimization_success if date != returns.index[0] else True,
+                    'stocks_available': stocks_available if date != returns.index[0] else len(returns.columns)
+                })
             
             # Calculate portfolio return using current weights
             daily_asset_returns = returns.loc[date].values
@@ -666,9 +714,10 @@ class BacktestEngine:
             'rebalancing_costs': rebalancing_costs_series
         })
         
-        # Store optimization dates as an attribute for reference
+        # Store optimization dates and compositions as attributes for reference
         result_df.attrs['optimization_dates'] = optimization_dates
         result_df.attrs['optimization_count'] = len(optimization_dates)
+        result_df.attrs['portfolio_compositions'] = portfolio_compositions
         
         return result_df
 
